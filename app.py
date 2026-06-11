@@ -1,8 +1,6 @@
 """
 Maritime Tension Index — dashboard.
-
-This app only READS data/mti_data.csv (rebuilt daily by GitHub Actions).
-It never downloads GDELT files, so it loads in ~1 second.
+Reads data/mti_data.csv rebuilt daily by GitHub Actions.
 """
 
 import pandas as pd
@@ -13,16 +11,41 @@ st.set_page_config(page_title="Maritime Tension Index", page_icon="🌊", layout
 
 BASE_YEAR = 2019
 
-CHART_LAYOUT = dict(
-    template="plotly_white",
-    hovermode="x unified",
-    font=dict(family="Arial", size=11),
-    paper_bgcolor="white",
-    plot_bgcolor="white",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                xanchor="right", x=1, font=dict(size=10)),
-    margin=dict(t=70, b=50, l=60, r=40),
+# Shared axis/layout defaults — all tuned for white background export
+AXIS_STYLE = dict(
+    showgrid=True,
+    gridcolor="#e5e5e5",
+    gridwidth=1,
+    zeroline=False,
+    linecolor="#cccccc",
+    linewidth=1,
+    showline=True,
+    tickfont=dict(color="#333333", size=11),
+    title_font=dict(color="#333333", size=11),
 )
+
+def base_layout(title_text, height):
+    return dict(
+        template="plotly_white",
+        hovermode="x unified",
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        font=dict(family="Arial", size=11, color="#333333"),
+        height=height,
+        margin=dict(t=60, b=50, l=65, r=40),
+        title=dict(
+            text=title_text,
+            font=dict(size=13, color="#111111"),
+            x=0, xanchor="left",
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom", y=1.02,
+            xanchor="right", x=1,
+            font=dict(size=10, color="#333333"),
+            bgcolor="rgba(255,255,255,0)",
+        ),
+    )
 
 # ── LOAD DATA ─────────────────────────────────────────────────────────────────
 
@@ -34,8 +57,7 @@ def load_data():
 
 full = load_data()
 if full.empty:
-    st.error("No data found. Run `python update_data.py` first (or wait for the "
-             "scheduled GitHub Action to populate data/mti_data.csv).")
+    st.error("No data found. Run `python update_data.py` first.")
     st.stop()
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
@@ -68,7 +90,7 @@ w_goldstein = st.sidebar.slider("Inverted Goldstein",          0.0, 1.0, 0.2, 0.
 total_w = (w_weighted + w_count + w_goldstein) or 1.0
 w_weighted, w_count, w_goldstein = (w / total_w for w in (w_weighted, w_count, w_goldstein))
 
-# ── RECOMPUTE INDEX ON THE FULL SERIES ────────────────────────────────────────
+# ── RECOMPUTE INDEX ───────────────────────────────────────────────────────────
 
 full = full.copy()
 full["MTI"] = (w_weighted * full["idx_weighted"]
@@ -108,18 +130,17 @@ c4.metric("Latest month events", f"{int(latest['conflict_events']):,}")
 c5.metric("Data through", full["date"].max().strftime("%b %Y"))
 
 if (pd.Timestamp.now() - full["date"].max()).days > 45:
-    st.warning("Data looks stale (latest month is more than 45 days old). "
-               "Check the GitHub Actions update workflow.")
+    st.warning("Data looks stale. Check the GitHub Actions update workflow.")
 
 st.markdown("---")
 
-# ── CATEGORY SHADING HELPER ───────────────────────────────────────────────────
+# ── CATEGORY SHADING ──────────────────────────────────────────────────────────
 
 cat_colours = {
-    "Low":    "rgba(46,204,113,0.12)",
-    "Medium": "rgba(241,196,15,0.12)",
-    "High":   "rgba(230,126,34,0.12)",
-    "Severe": "rgba(192,57,43,0.12)",
+    "Low":    "rgba(46,204,113,0.10)",
+    "Medium": "rgba(241,196,15,0.10)",
+    "High":   "rgba(230,126,34,0.10)",
+    "Severe": "rgba(192,57,43,0.10)",
 }
 
 def add_category_shading(fig):
@@ -142,32 +163,35 @@ fig1 = go.Figure()
 add_category_shading(fig1)
 
 fig1.add_trace(go.Scatter(
-    x=df["date"], y=df["MTI"], mode="lines", name="MTI (monthly)",
-    line=dict(color="rgba(192,57,43,0.2)", width=1),
+    x=df["date"], y=df["MTI"],
+    mode="lines", name="MTI (monthly)",
+    line=dict(color="rgba(192,57,43,0.25)", width=1),
     hovertemplate="MTI: %{y:.1f}<extra></extra>"))
 
 fig1.add_trace(go.Scatter(
-    x=df["date"], y=df["MTI_smooth"], mode="lines", name="MTI (3M avg)",
-    line=dict(color="#C0392B", width=2.8),
+    x=df["date"], y=df["MTI_smooth"],
+    mode="lines", name="MTI (3M avg)",
+    line=dict(color="#C0392B", width=2.5),
     hovertemplate="MTI 3M: %{y:.1f}<extra></extra>"))
 
-fig1.add_hline(y=100, line_dash="dash", line_color="rgba(100,100,100,0.5)", line_width=1.2)
+fig1.add_hline(y=100, line_dash="dash",
+               line_color="rgba(80,80,80,0.4)", line_width=1.2)
 
 for threshold, label, colour in [
-    (p75, f"High >{p75:.0f}",   "rgba(230,126,34,0.7)"),
-    (p90, f"Severe >{p90:.0f}", "rgba(192,57,43,0.7)"),
+    (p75, f"High >{p75:.0f}",   "#E67E22"),
+    (p90, f"Severe >{p90:.0f}", "#C0392B"),
 ]:
-    fig1.add_hline(y=threshold, line_dash="dot", line_color=colour, line_width=1.2,
-                   annotation_text=label, annotation_font=dict(size=9, color=colour),
-                   annotation_position="right")
+    fig1.add_hline(
+        y=threshold, line_dash="dot", line_color=colour, line_width=1.2,
+        annotation_text=label,
+        annotation_font=dict(size=9, color=colour),
+        annotation_position="right",
+    )
 
-fig1.update_layout(
-    **CHART_LAYOUT,
-    height=420,
-    title=dict(text=f"Maritime Tension Index — SCS / ECS / Taiwan Strait ({BASE_YEAR}=100)",
-               font=dict(size=13), x=0, xanchor="left"),
-    yaxis_title=f"{BASE_YEAR}=100",
-)
+fig1.update_layout(**base_layout(
+    f"Maritime Tension Index — SCS / ECS / Taiwan Strait ({BASE_YEAR}=100)", 420))
+fig1.update_xaxes(**AXIS_STYLE)
+fig1.update_yaxes(**AXIS_STYLE, title_text=f"{BASE_YEAR}=100")
 
 st.plotly_chart(fig1, width="stretch")
 
@@ -176,53 +200,56 @@ st.plotly_chart(fig1, width="stretch")
 fig2 = go.Figure()
 
 for col_name, colour, label, w in [
-    ("idx_weighted",  "#E67E22", "Severity-weighted", w_weighted),
-    ("idx_count",     "#2471A3", "Event share",       w_count),
+    ("idx_weighted",  "#D35400", "Severity-weighted", w_weighted),
+    ("idx_count",     "#1A5276", "Event share",       w_count),
     ("idx_goldstein", "#1E8449", "Inverted Goldstein", w_goldstein),
 ]:
     fig2.add_trace(go.Scatter(
-        x=df["date"], y=df[col_name].rolling(3, min_periods=1).mean(),
+        x=df["date"],
+        y=df[col_name].rolling(3, min_periods=1).mean(),
         mode="lines", name=f"{label} ({w:.2f}w)",
         line=dict(color=colour, width=1.8),
         hovertemplate=f"{label}: %{{y:.1f}}<extra></extra>"))
 
-fig2.add_hline(y=100, line_dash="dash", line_color="rgba(100,100,100,0.5)", line_width=1.2)
+fig2.add_hline(y=100, line_dash="dash",
+               line_color="rgba(80,80,80,0.4)", line_width=1.2)
 
-fig2.update_layout(
-    **CHART_LAYOUT,
-    height=340,
-    title=dict(text="Component breakdown (3M avg)",
-               font=dict(size=13), x=0, xanchor="left"),
-    yaxis_title=f"{BASE_YEAR}=100",
-)
+fig2.update_layout(**base_layout("Component breakdown (3M avg)", 320))
+fig2.update_xaxes(**AXIS_STYLE)
+fig2.update_yaxes(**AXIS_STYLE, title_text=f"{BASE_YEAR}=100")
 
 st.plotly_chart(fig2, width="stretch")
 
 # ── CHART 3: CAMEO STACKED BAR ────────────────────────────────────────────────
 
-cameo_colours = {"13": "#AED6F1", "14": "#5DADE2", "15": "#F9E79F",
-                 "16": "#F0B27A", "17": "#E59866", "18": "#E74C3C", "19": "#922B21"}
-cameo_labels  = {"13": "13: Threaten", "14": "14: Protest/Demand",
-                 "15": "15: Force Posture", "16": "16: Reduce Relations",
-                 "17": "17: Coerce", "18": "18: Assault", "19": "19: Fight"}
+cameo_colours = {
+    "13": "#AED6F1", "14": "#2E86C1", "15": "#F9E79F",
+    "16": "#F0B27A", "17": "#CA6F1E", "18": "#E74C3C", "19": "#922B21",
+}
+cameo_labels = {
+    "13": "13: Threaten",        "14": "14: Protest/Demand",
+    "15": "15: Force Posture",   "16": "16: Reduce Relations",
+    "17": "17: Coerce",          "18": "18: Assault",
+    "19": "19: Fight",
+}
 
 fig3 = go.Figure()
 
 for code in ["13", "14", "15", "16", "17", "18", "19"]:
     if code in df.columns:
         fig3.add_trace(go.Bar(
-            x=df["date"], y=df[code], name=cameo_labels[code],
+            x=df["date"], y=df[code],
+            name=cameo_labels[code],
             marker_color=cameo_colours[code],
+            marker_line_width=0,
             hovertemplate=f"{cameo_labels[code]}: %{{y}}<extra></extra>"))
 
 fig3.update_layout(
-    **CHART_LAYOUT,
+    **base_layout("Monthly conflict events by CAMEO root code", 320),
     barmode="stack",
-    height=320,
-    title=dict(text="Monthly conflict events by CAMEO root code",
-               font=dict(size=13), x=0, xanchor="left"),
-    yaxis_title="Event count",
 )
+fig3.update_xaxes(**AXIS_STYLE)
+fig3.update_yaxes(**AXIS_STYLE, title_text="Event count")
 
 st.plotly_chart(fig3, width="stretch")
 
