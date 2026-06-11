@@ -8,11 +8,21 @@ It never downloads GDELT files, so it loads in ~1 second.
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="Maritime Tension Index", page_icon="🌊", layout="wide")
 
 BASE_YEAR = 2019
+
+CHART_LAYOUT = dict(
+    template="plotly_white",
+    hovermode="x unified",
+    font=dict(family="Arial", size=11),
+    paper_bgcolor="white",
+    plot_bgcolor="white",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                xanchor="right", x=1, font=dict(size=10)),
+    margin=dict(t=70, b=50, l=60, r=40),
+)
 
 # ── LOAD DATA ─────────────────────────────────────────────────────────────────
 
@@ -58,11 +68,7 @@ w_goldstein = st.sidebar.slider("Inverted Goldstein",          0.0, 1.0, 0.2, 0.
 total_w = (w_weighted + w_count + w_goldstein) or 1.0
 w_weighted, w_count, w_goldstein = (w / total_w for w in (w_weighted, w_count, w_goldstein))
 
-show_events = st.sidebar.checkbox("Annotate notable incidents", value=True)
-
-# ── RECOMPUTE INDEX ON THE FULL SERIES (then filter for display) ──────────────
-# Categories/thresholds must come from the whole history, otherwise changing the
-# date range silently changes what "High" means.
+# ── RECOMPUTE INDEX ON THE FULL SERIES ────────────────────────────────────────
 
 full = full.copy()
 full["MTI"] = (w_weighted * full["idx_weighted"]
@@ -107,7 +113,7 @@ if (pd.Timestamp.now() - full["date"].max()).days > 45:
 
 st.markdown("---")
 
-# ── CHART ─────────────────────────────────────────────────────────────────────
+# ── CATEGORY SHADING HELPER ───────────────────────────────────────────────────
 
 cat_colours = {
     "Low":    "rgba(46,204,113,0.12)",
@@ -116,88 +122,83 @@ cat_colours = {
     "Severe": "rgba(192,57,43,0.12)",
 }
 
-fig = make_subplots(
-    rows=3, cols=1, shared_xaxes=True,
-    subplot_titles=(
-        f"Maritime Tension Index — SCS / ECS / Taiwan Strait ({BASE_YEAR}=100)",
-        "Component breakdown (3M avg)",
-        "Monthly conflict events by CAMEO root code",
-    ),
-    vertical_spacing=0.08,
-    row_heights=[0.50, 0.27, 0.23],
-)
+def add_category_shading(fig):
+    prev_cat, start_dt = None, None
+    for _, row in df.iterrows():
+        if row["category"] != prev_cat:
+            if prev_cat is not None:
+                fig.add_vrect(x0=start_dt, x1=row["date"],
+                              fillcolor=cat_colours[prev_cat],
+                              layer="below", line_width=0)
+            prev_cat, start_dt = row["category"], row["date"]
+    if prev_cat:
+        fig.add_vrect(x0=start_dt, x1=df["date"].iloc[-1],
+                      fillcolor=cat_colours[prev_cat],
+                      layer="below", line_width=0)
 
-# Category shading
-prev_cat, start_dt = None, None
-for _, row in df.iterrows():
-    if row["category"] != prev_cat:
-        if prev_cat is not None:
-            fig.add_vrect(x0=start_dt, x1=row["date"], fillcolor=cat_colours[prev_cat],
-                          layer="below", line_width=0, row=1, col=1)
-        prev_cat, start_dt = row["category"], row["date"]
-if prev_cat:
-    fig.add_vrect(x0=start_dt, x1=df["date"].iloc[-1], fillcolor=cat_colours[prev_cat],
-                  layer="below", line_width=0, row=1, col=1)
+# ── CHART 1: MTI ──────────────────────────────────────────────────────────────
 
-fig.add_trace(go.Scatter(
+fig1 = go.Figure()
+add_category_shading(fig1)
+
+fig1.add_trace(go.Scatter(
     x=df["date"], y=df["MTI"], mode="lines", name="MTI (monthly)",
     line=dict(color="rgba(192,57,43,0.2)", width=1),
-    hovertemplate="MTI: %{y:.1f}<extra></extra>"), row=1, col=1)
+    hovertemplate="MTI: %{y:.1f}<extra></extra>"))
 
-fig.add_trace(go.Scatter(
+fig1.add_trace(go.Scatter(
     x=df["date"], y=df["MTI_smooth"], mode="lines", name="MTI (3M avg)",
     line=dict(color="#C0392B", width=2.8),
-    hovertemplate="MTI 3M: %{y:.1f}<extra></extra>"), row=1, col=1)
+    hovertemplate="MTI 3M: %{y:.1f}<extra></extra>"))
 
-fig.add_hline(y=100, line_dash="dash", line_color="rgba(100,100,100,0.5)",
-              line_width=1.2, row=1, col=1)
+fig1.add_hline(y=100, line_dash="dash", line_color="rgba(100,100,100,0.5)", line_width=1.2)
 
 for threshold, label, colour in [
     (p75, f"High >{p75:.0f}",   "rgba(230,126,34,0.7)"),
     (p90, f"Severe >{p90:.0f}", "rgba(192,57,43,0.7)"),
 ]:
-    fig.add_hline(y=threshold, line_dash="dot", line_color=colour, line_width=1.2,
-                  annotation_text=label, annotation_font=dict(size=9, color=colour),
-                  annotation_position="right", row=1, col=1)
+    fig1.add_hline(y=threshold, line_dash="dot", line_color=colour, line_width=1.2,
+                   annotation_text=label, annotation_font=dict(size=9, color=colour),
+                   annotation_position="right")
 
-# Notable incidents — edit freely, format: (YYYY-MM-DD, short label)
-EVENTS = [
-    ("2019-07-01", "Vanguard Bank standoff"),
-    ("2020-04-01", "VN vessel sinking"),
-    ("2021-03-01", "Whitsun Reef massing"),
-    ("2022-08-04", "Pelosi visit / PLA drills"),
-    ("2023-08-05", "2nd Thomas water cannon"),
-    ("2024-03-05", "2nd Thomas collisions"),
-    ("2024-06-17", "2nd Thomas boarding clash"),
-    ("2024-08-19", "Sabina Shoal collisions"),
-    ("2024-12-09", "PLA multi-theatre drills"),
-    ("2025-04-01", "Strait Thunder drills"),
-]
-if show_events:
-    y_ann = full["MTI_smooth"].quantile(0.91)
-    for date_str, label in EVENTS:
-        d_ts = pd.Timestamp(date_str)
-        if not (pd.Timestamp(start) <= d_ts <= pd.Timestamp(end)):
-            continue
-        fig.add_vline(x=date_str, line_dash="dot",
-                      line_color="rgba(80,80,80,0.25)", row=1, col=1)
-        fig.add_annotation(x=date_str, y=y_ann, text=label, showarrow=False,
-                           font=dict(size=8, color="#999"), textangle=-90,
-                           row=1, col=1)
+fig1.update_layout(
+    **CHART_LAYOUT,
+    height=420,
+    title=dict(text=f"Maritime Tension Index — SCS / ECS / Taiwan Strait ({BASE_YEAR}=100)",
+               font=dict(size=13), x=0, xanchor="left"),
+    yaxis_title=f"{BASE_YEAR}=100",
+)
+
+st.plotly_chart(fig1, width="stretch")
+
+# ── CHART 2: COMPONENT BREAKDOWN ──────────────────────────────────────────────
+
+fig2 = go.Figure()
 
 for col_name, colour, label, w in [
     ("idx_weighted",  "#E67E22", "Severity-weighted", w_weighted),
     ("idx_count",     "#2471A3", "Event share",       w_count),
     ("idx_goldstein", "#1E8449", "Inverted Goldstein", w_goldstein),
 ]:
-    fig.add_trace(go.Scatter(
+    fig2.add_trace(go.Scatter(
         x=df["date"], y=df[col_name].rolling(3, min_periods=1).mean(),
         mode="lines", name=f"{label} ({w:.2f}w)",
-        line=dict(color=colour, width=1.6),
-        hovertemplate=f"{label}: %{{y:.1f}}<extra></extra>"), row=2, col=1)
+        line=dict(color=colour, width=1.8),
+        hovertemplate=f"{label}: %{{y:.1f}}<extra></extra>"))
 
-fig.add_hline(y=100, line_dash="dash", line_color="rgba(100,100,100,0.5)",
-              line_width=1.2, row=2, col=1)
+fig2.add_hline(y=100, line_dash="dash", line_color="rgba(100,100,100,0.5)", line_width=1.2)
+
+fig2.update_layout(
+    **CHART_LAYOUT,
+    height=340,
+    title=dict(text="Component breakdown (3M avg)",
+               font=dict(size=13), x=0, xanchor="left"),
+    yaxis_title=f"{BASE_YEAR}=100",
+)
+
+st.plotly_chart(fig2, width="stretch")
+
+# ── CHART 3: CAMEO STACKED BAR ────────────────────────────────────────────────
 
 cameo_colours = {"13": "#AED6F1", "14": "#5DADE2", "15": "#F9E79F",
                  "16": "#F0B27A", "17": "#E59866", "18": "#E74C3C", "19": "#922B21"}
@@ -205,25 +206,25 @@ cameo_labels  = {"13": "13: Threaten", "14": "14: Protest/Demand",
                  "15": "15: Force Posture", "16": "16: Reduce Relations",
                  "17": "17: Coerce", "18": "18: Assault", "19": "19: Fight"}
 
+fig3 = go.Figure()
+
 for code in ["13", "14", "15", "16", "17", "18", "19"]:
     if code in df.columns:
-        fig.add_trace(go.Bar(
+        fig3.add_trace(go.Bar(
             x=df["date"], y=df[code], name=cameo_labels[code],
             marker_color=cameo_colours[code],
-            hovertemplate=f"{cameo_labels[code]}: %{{y}}<extra></extra>"), row=3, col=1)
+            hovertemplate=f"{cameo_labels[code]}: %{{y}}<extra></extra>"))
 
-fig.update_layout(
-    barmode="stack", height=820, template="plotly_white", hovermode="x unified",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-                font=dict(size=10)),
-    font=dict(family="Arial", size=11),
-    margin=dict(t=80, b=40, l=60, r=100),
+fig3.update_layout(
+    **CHART_LAYOUT,
+    barmode="stack",
+    height=320,
+    title=dict(text="Monthly conflict events by CAMEO root code",
+               font=dict(size=13), x=0, xanchor="left"),
+    yaxis_title="Event count",
 )
-fig.update_yaxes(title_text=f"{BASE_YEAR}=100", row=1, col=1)
-fig.update_yaxes(title_text=f"{BASE_YEAR}=100", row=2, col=1)
-fig.update_yaxes(title_text="Event count", row=3, col=1)
 
-st.plotly_chart(fig, width="stretch")
+st.plotly_chart(fig3, width="stretch")
 
 # ── DATA TABLE + METHODOLOGY ──────────────────────────────────────────────────
 
